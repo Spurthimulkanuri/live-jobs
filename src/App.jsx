@@ -1,243 +1,522 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 
-// Domain Categories to toggle in UI
-const CATEGORIES = [
-  { id: 'ai_ml', label: 'AI / Machine Learning', icon: '🧠' },
-  { id: 'fullstack', label: 'Full Stack Development', icon: '💻' },
-  { id: 'datascience', label: 'Data Science', icon: '📊' },
-  { id: 'cloudcomputing', label: 'Cloud Computing', icon: '☁️' },
-  { id: 'cybersecurity', label: 'Cybersecurity', icon: '🛡️' }
+/* ─── Constants ─── */
+const DOMAINS = [
+  { id: 'ai_ml', label: 'AI / ML' },
+  { id: 'fullstack', label: 'Full Stack' },
+  { id: 'datascience', label: 'Data Science' },
+  { id: 'cloudcomputing', label: 'Cloud' },
+  { id: 'cybersecurity', label: 'Security' },
 ];
 
+const API_BASE = 'http://localhost:5000/api/jobs';
+
+/* ─── Helpers ─── */
+function getExperienceBadge(title, snippet) {
+  const text = ((title || '') + ' ' + (snippet || '')).toLowerCase();
+  if (/\b(senior|lead|principal|staff|architect|director|head)\b/.test(text)) {
+    return { label: 'Senior', color: '#F59E0B', bg: 'rgba(245,158,11,0.1)' };
+  }
+  if (/\b(junior|intern|associate|trainee|entry|fresher|graduate)\b/.test(text)) {
+    return { label: 'Entry Level', color: '#22C55E', bg: 'rgba(34,197,94,0.1)' };
+  }
+  return { label: 'Mid Level', color: '#6366F1', bg: 'rgba(99,102,241,0.1)' };
+}
+
+function timeAgo(dateStr) {
+  if (!dateStr || dateStr === 'Recent') return 'Recently';
+  try {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - d;
+    const days = Math.floor(diffMs / 86400000);
+    if (days === 0) return 'Today';
+    if (days === 1) return 'Yesterday';
+    if (days < 7) return `${days}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    return dateStr;
+  } catch {
+    return dateStr;
+  }
+}
+
+/* ─── Bookmark persistence ─── */
+function loadBookmarks() {
+  try {
+    return JSON.parse(localStorage.getItem('livejobs_bookmarks') || '[]');
+  } catch { return []; }
+}
+function saveBookmarks(ids) {
+  localStorage.setItem('livejobs_bookmarks', JSON.stringify(ids));
+}
+
+/* ─── Skeleton Card ─── */
+function SkeletonCard() {
+  return (
+    <div style={{
+      background: '#111827', border: '1px solid #26354A', borderRadius: 10,
+      padding: 20, display: 'flex', flexDirection: 'column', gap: 14
+    }}>
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div className="skeleton" style={{ width: 40, height: 40, borderRadius: 8, flexShrink: 0 }} />
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div className="skeleton" style={{ height: 12, width: '60%' }} />
+          <div className="skeleton" style={{ height: 16, width: '85%' }} />
+        </div>
+      </div>
+      <div className="skeleton" style={{ height: 10, width: '90%' }} />
+      <div className="skeleton" style={{ height: 10, width: '70%' }} />
+      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+        <div className="skeleton" style={{ height: 24, width: 70, borderRadius: 4 }} />
+        <div className="skeleton" style={{ height: 24, width: 80, borderRadius: 4 }} />
+      </div>
+    </div>
+  );
+}
+
+/* ─── Main App ─── */
 export default function App() {
-  const [selectedDomain, setSelectedDomain] = useState('ai_ml');
+  const [domain, setDomain] = useState('ai_ml');
+  const [locationInput, setLocationInput] = useState('');
+  const [locationQuery, setLocationQuery] = useState('');
+  const [jobTypes, setJobTypes] = useState({ fulltime: false, parttime: false, internship: false });
   const [jobs, setJobs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [bookmarkedIds, setBookmarkedIds] = useState(loadBookmarks);
+  const [showBookmarksOnly, setShowBookmarksOnly] = useState(false);
 
-  // useEffect Hook triggers every time selectedDomain changes
+  // Debounced location search — apply on Enter or blur
+  const applyLocation = useCallback(() => {
+    setLocationQuery(locationInput.trim());
+  }, [locationInput]);
+
+  // Fetch jobs from backend
   useEffect(() => {
+    const ctrl = new AbortController();
     const fetchJobs = async () => {
       setLoading(true);
       setError(null);
       try {
-        const response = await axios.get(`http://localhost:5000/api/jobs?domain=${selectedDomain}`);
-        if (Array.isArray(response.data)) {
-          setJobs(response.data);
-        } else {
-          setJobs([]);
-          setError("Invalid response format received from server.");
-        }
+        const params = new URLSearchParams({ domain });
+        if (locationQuery) params.append('location', locationQuery);
+
+        // Find first active job type checkbox
+        const activeType = Object.entries(jobTypes).find(([, v]) => v);
+        if (activeType) params.append('job_type', activeType[0]);
+
+        const res = await axios.get(`${API_BASE}?${params.toString()}`, { signal: ctrl.signal });
+        setJobs(Array.isArray(res.data) ? res.data : []);
       } catch (err) {
-        console.error("Fetch error:", err);
-        setError(err.response?.data?.error || err.message || "Could not fetch job openings.");
+        if (!axios.isCancel(err)) {
+          setError(err.response?.data?.error || err.message);
+        }
       } finally {
         setLoading(false);
       }
     };
-
     fetchJobs();
-  }, [selectedDomain]);
+    return () => ctrl.abort();
+  }, [domain, locationQuery, jobTypes]);
 
-  // Styling helper for publisher badges
-  const getPublisherStyles = (publisher) => {
-    const pub = publisher ? publisher.toLowerCase().trim() : '';
-    if (pub.includes('linkedin')) {
-      return 'bg-blue-500/10 text-blue-400 border border-blue-500/20';
-    } else if (pub.includes('naukri')) {
-      return 'bg-amber-500/10 text-amber-400 border border-amber-500/20';
-    } else if (pub.includes('indeed')) {
-      return 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20';
-    } else if (pub.includes('glassdoor')) {
-      return 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-    } else if (pub.includes('foundit')) {
-      return 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20';
-    } else if (pub.includes('shine')) {
-      return 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20';
-    } else if (pub.includes('upwork')) {
-      return 'bg-green-500/10 text-green-400 border border-green-500/20';
-    } else if (pub.includes('ziprecruiter')) {
-      return 'bg-orange-500/10 text-orange-400 border border-orange-500/20';
-    } else {
-      return 'bg-purple-500/10 text-purple-400 border border-purple-500/20';
+  // Bookmark helpers
+  const toggleBookmark = useCallback((id) => {
+    setBookmarkedIds(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id];
+      saveBookmarks(next);
+      return next;
+    });
+  }, []);
+
+  const resetFilters = () => {
+    setLocationInput('');
+    setLocationQuery('');
+    setJobTypes({ fulltime: false, parttime: false, internship: false });
+    setShowBookmarksOnly(false);
+  };
+
+  // Visible jobs
+  const visibleJobs = useMemo(() => {
+    if (showBookmarksOnly) return jobs.filter(j => bookmarkedIds.includes(j.id));
+    return jobs;
+  }, [jobs, showBookmarksOnly, bookmarkedIds]);
+
+  const toggleJobType = (key) => {
+    setJobTypes(prev => {
+      // Radio behavior: only one active at a time, or toggle off
+      const newState = { fulltime: false, parttime: false, internship: false };
+      if (!prev[key]) newState[key] = true;
+      return newState;
+    });
+  };
+
+  /* ─── Styles ─── */
+  const s = {
+    page: {
+      display: 'flex', flexDirection: 'column', minHeight: '100vh',
+      background: '#0B0F17', color: '#E2E8F0'
+    },
+    header: {
+      borderBottom: '1px solid #26354A', padding: '14px 24px',
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      background: '#0D1117', position: 'sticky', top: 0, zIndex: 50
+    },
+    logo: {
+      fontSize: 16, fontWeight: 700, letterSpacing: '-0.02em', color: '#E2E8F0',
+      display: 'flex', alignItems: 'center', gap: 8
+    },
+    nav: {
+      display: 'flex', gap: 2, background: '#111827', borderRadius: 8,
+      padding: 3, border: '1px solid #26354A'
+    },
+    navBtn: (active) => ({
+      padding: '7px 14px', fontSize: 13, fontWeight: 500, borderRadius: 6,
+      border: 'none', cursor: 'pointer', transition: 'all 0.15s',
+      background: active ? '#1C2536' : 'transparent',
+      color: active ? '#E2E8F0' : '#5A6F8F',
+    }),
+    bookmarkToggle: (active) => ({
+      padding: '7px 14px', fontSize: 12, fontWeight: 500, borderRadius: 6,
+      border: active ? '1px solid #F59E0B' : '1px solid #26354A',
+      cursor: 'pointer', background: active ? 'rgba(245,158,11,0.08)' : '#111827',
+      color: active ? '#F59E0B' : '#5A6F8F', display: 'flex', alignItems: 'center', gap: 6
+    }),
+    body: { display: 'flex', flex: 1 },
+    sidebar: {
+      width: 260, borderRight: '1px solid #26354A', padding: '20px 16px',
+      background: '#0D1117', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 24,
+      position: 'sticky', top: 53, height: 'calc(100vh - 53px)', overflowY: 'auto'
+    },
+    sideSection: { display: 'flex', flexDirection: 'column', gap: 10 },
+    sideLabel: {
+      fontSize: 11, fontWeight: 600, textTransform: 'uppercase',
+      letterSpacing: '0.05em', color: '#5A6F8F', marginBottom: 2
+    },
+    input: {
+      padding: '8px 10px', fontSize: 13, borderRadius: 6, border: '1px solid #26354A',
+      background: '#111827', color: '#E2E8F0', outline: 'none', width: '100%',
+      transition: 'border-color 0.15s'
+    },
+    checkbox: (checked) => ({
+      display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px',
+      borderRadius: 6, cursor: 'pointer', fontSize: 13, color: '#8B9DC3',
+      background: checked ? 'rgba(99,102,241,0.08)' : 'transparent',
+      border: checked ? '1px solid rgba(99,102,241,0.3)' : '1px solid transparent',
+      transition: 'all 0.15s'
+    }),
+    resetBtn: {
+      padding: '8px 12px', fontSize: 12, fontWeight: 500, borderRadius: 6,
+      border: '1px solid #26354A', background: 'transparent', color: '#5A6F8F',
+      cursor: 'pointer', marginTop: 4
+    },
+    main: { flex: 1, padding: '20px 24px', overflowY: 'auto' },
+    statusBar: {
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      marginBottom: 16, fontSize: 13, color: '#5A6F8F'
+    },
+    grid: {
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+      gap: 12
+    },
+    card: {
+      background: '#111827', border: '1px solid #26354A', borderRadius: 10,
+      padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12,
+      transition: 'border-color 0.15s, box-shadow 0.15s', cursor: 'default'
+    },
+    cardHover: {
+      borderColor: '#374B6A',
+      boxShadow: '0 2px 12px rgba(0,0,0,0.25)'
+    },
+    badge: (color, bg) => ({
+      display: 'inline-flex', alignItems: 'center', padding: '2px 8px',
+      borderRadius: 4, fontSize: 11, fontWeight: 600, color, background: bg,
+      lineHeight: '18px'
+    }),
+    pubBadge: {
+      display: 'inline-flex', alignItems: 'center', padding: '2px 8px',
+      borderRadius: 4, fontSize: 11, fontWeight: 500, color: '#8B9DC3',
+      background: 'rgba(139,157,195,0.08)', border: '1px solid rgba(139,157,195,0.12)'
+    },
+    applyBtn: {
+      padding: '7px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6,
+      border: '1px solid #26354A', background: '#151D2A', color: '#E2E8F0',
+      cursor: 'pointer', textDecoration: 'none', display: 'inline-flex',
+      alignItems: 'center', gap: 4, transition: 'all 0.15s'
+    },
+    starBtn: (active) => ({
+      width: 30, height: 30, borderRadius: 6, border: 'none',
+      background: active ? 'rgba(245,158,11,0.1)' : 'transparent',
+      color: active ? '#F59E0B' : '#5A6F8F', cursor: 'pointer',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: 16, transition: 'all 0.15s', flexShrink: 0
+    }),
+    emptyState: {
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', padding: '80px 20px', color: '#5A6F8F',
+      textAlign: 'center', gap: 12
+    },
+    errorBox: {
+      background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)',
+      borderRadius: 10, padding: 24, textAlign: 'center', maxWidth: 480,
+      margin: '60px auto'
     }
   };
 
   return (
-    <div className="relative min-h-screen bg-slate-950 text-slate-100 overflow-x-hidden pb-16">
-      {/* Dynamic Glowing Blur Accents */}
-      <div className="absolute top-0 left-1/4 w-[400px] h-[400px] bg-indigo-600/10 rounded-full blur-3xl pointer-events-none animate-pulse-glow" />
-      <div className="absolute top-[30%] right-1/4 w-[500px] h-[500px] bg-violet-600/10 rounded-full blur-3xl pointer-events-none animate-pulse-glow" style={{ animationDelay: '4s' }} />
+    <div style={s.page}>
+      {/* ─── Header ─── */}
+      <header style={s.header}>
+        <div style={s.logo}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366F1" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+            <path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16" />
+          </svg>
+          LiveJobs
+          <span style={{
+            fontSize: 10, fontWeight: 600, color: '#6366F1', background: 'rgba(99,102,241,0.1)',
+            padding: '2px 6px', borderRadius: 4, marginLeft: 2
+          }}>BETA</span>
+        </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 relative z-10">
-        
-        {/* Main Header */}
-        <header className="border-b border-slate-900 pb-8 mb-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-          <div>
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-3xl">🚀</span>
-              <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-400">
-                Domain Job Hub <span className="text-xs font-mono font-bold align-middle bg-violet-500/10 text-violet-400 border border-violet-500/25 px-2 py-0.5 rounded ml-2 uppercase">Verified</span>
-              </h1>
-            </div>
-            <p className="text-slate-400 text-sm sm:text-base max-w-2xl leading-relaxed">
-              Real-time, strictly filtered tech vacancies. Sourced dynamically from major verified portals (LinkedIn, Indeed, Naukri, Glassdoor, Foundit, Shine, Upwork, ZipRecruiter) and direct corporate sites.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25">
-            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span>
-            Real-time Aggregator Live
-          </div>
-        </header>
-
-        {/* Categories Tab Selector */}
-        <section className="mb-10">
-          <h2 className="text-xs uppercase tracking-widest text-slate-500 font-bold mb-4">Select Domain Category</h2>
-          <div className="flex flex-wrap gap-3">
-            {CATEGORIES.map((cat) => {
-              const isActive = selectedDomain === cat.id;
-              return (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedDomain(cat.id)}
-                  className={`flex items-center gap-2.5 px-5 py-3.5 rounded-xl border text-sm font-semibold transition-all duration-300 cursor-pointer ${
-                    isActive
-                      ? 'bg-gradient-to-r from-violet-600 to-indigo-600 border-violet-500 text-white shadow-lg shadow-violet-500/30 scale-[1.02]'
-                      : 'bg-slate-900/40 hover:bg-slate-900 border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 hover:scale-[1.01]'
-                  }`}
-                >
-                  <span className="text-base select-none">{cat.icon}</span>
-                  <span>{cat.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Loading Spinner & Status */}
-        {loading && (
-          <div className="flex flex-col items-center justify-center py-24 min-h-[400px]">
-            <div className="relative mb-6">
-              <div className="w-14 h-14 rounded-full border-4 border-slate-800 border-t-violet-500 animate-spin"></div>
-              <div className="absolute inset-0 w-14 h-14 rounded-full border-4 border-transparent border-b-cyan-400 animate-pulse"></div>
-            </div>
-            <h3 className="text-lg font-semibold text-slate-300 animate-pulse">Loading live, genuine openings...</h3>
-            <p className="text-slate-500 text-xs mt-1">Filtering out corporate placeholders and generic recruitment agency spam</p>
-          </div>
-        )}
-
-        {/* Error Handling */}
-        {!loading && error && (
-          <div className="bg-rose-500/5 border border-rose-500/20 rounded-2xl p-8 text-center max-w-xl mx-auto my-12">
-            <div className="inline-flex p-3.5 bg-rose-500/10 text-rose-400 rounded-full mb-4">
-              <svg className="w-7 h-7" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-bold text-rose-300 mb-2">Error Fetching Openings</h3>
-            <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-              {error}
-            </p>
-            <button
-              onClick={() => setSelectedDomain(selectedDomain)}
-              className="bg-slate-900 border border-slate-800 hover:border-slate-700 text-slate-200 px-6 py-2.5 rounded-xl font-semibold transition-all duration-200 cursor-pointer"
-            >
-              Retry Connection
+        {/* Domain Tabs */}
+        <nav style={s.nav}>
+          {DOMAINS.map(d => (
+            <button key={d.id} style={s.navBtn(domain === d.id)}
+              onMouseEnter={e => { if (domain !== d.id) e.target.style.color = '#8B9DC3'; }}
+              onMouseLeave={e => { if (domain !== d.id) e.target.style.color = '#5A6F8F'; }}
+              onClick={() => setDomain(d.id)}>
+              {d.label}
             </button>
+          ))}
+        </nav>
+
+        {/* Bookmark Toggle */}
+        <button style={s.bookmarkToggle(showBookmarksOnly)}
+          onClick={() => setShowBookmarksOnly(p => !p)}>
+          <span>{showBookmarksOnly ? '★' : '☆'}</span>
+          Saved ({bookmarkedIds.length})
+        </button>
+      </header>
+
+      <div style={s.body}>
+        {/* ─── Sidebar ─── */}
+        <aside style={s.sidebar}>
+          {/* Location Filter */}
+          <div style={s.sideSection}>
+            <div style={s.sideLabel}>Location</div>
+            <input
+              style={s.input}
+              type="text"
+              placeholder="e.g. Remote, Bengaluru"
+              value={locationInput}
+              onChange={e => setLocationInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') applyLocation(); }}
+              onBlur={applyLocation}
+              onFocus={e => e.target.style.borderColor = '#6366F1'}
+            />
+            {locationQuery && (
+              <div style={{ fontSize: 11, color: '#6366F1', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span>Filtering: {locationQuery}</span>
+                <span style={{ cursor: 'pointer', color: '#5A6F8F' }}
+                  onClick={() => { setLocationInput(''); setLocationQuery(''); }}>✕</span>
+              </div>
+            )}
           </div>
-        )}
 
-        {/* Empty State */}
-        {!loading && !error && jobs.length === 0 && (
-          <div className="bg-slate-900/30 border border-slate-900 rounded-2xl p-16 text-center max-w-xl mx-auto my-12">
-            <span className="text-4xl block mb-4">🔍</span>
-            <h3 className="text-xl font-bold text-slate-300 mb-2">No Verified Postings</h3>
-            <p className="text-slate-500 text-sm leading-relaxed">
-              Currently no active postings for this domain passed our filters. Please try another category.
-            </p>
-          </div>
-        )}
-
-        {/* Jobs Cards Layout Grid */}
-        {!loading && !error && jobs.length > 0 && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {jobs.map((job) => (
-              <article 
-                key={job.id}
-                className="group relative flex flex-col justify-between bg-slate-900/35 backdrop-blur-md border border-slate-900 rounded-2xl p-6 transition-all duration-300 hover:-translate-y-1 hover:border-slate-800 hover:shadow-[0_12px_30px_rgba(139,92,246,0.06)]"
-              >
-                {/* Visual glow-line card accent */}
-                <div className="absolute inset-x-0 -bottom-px h-[2px] bg-gradient-to-r from-transparent via-violet-500/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                
-                <div>
-                  {/* Card Header (Logo & Company Title) */}
-                  <div className="flex items-start gap-4 mb-4">
-                    <div className="w-12 h-12 bg-white rounded-xl p-1 flex items-center justify-center shadow-inner overflow-hidden shrink-0 border border-slate-200/50">
-                      <img 
-                        src={job.logo} 
-                        alt={`${job.company} logo`}
-                        onError={(e) => {
-                          e.target.onerror = null;
-                          e.target.src = 'https://cdn-icons-png.flaticon.com/512/2930/2930225.png';
-                        }}
-                        className="w-full h-full object-contain"
-                      />
-                    </div>
-
-                    <div className="min-w-0">
-                      <span className="text-slate-400 text-xs font-semibold tracking-wide uppercase truncate block">
-                        {job.company}
-                      </span>
-                      <h3 className="text-base sm:text-lg font-bold text-white group-hover:text-violet-300 transition-colors duration-200 line-clamp-2 mt-0.5 leading-snug">
-                        {job.title}
-                      </h3>
-                    </div>
-                  </div>
-
-                  {/* Metadata fields */}
-                  <div className="space-y-2.5 pt-3 mb-6 border-t border-slate-900/60 text-xs text-slate-400">
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-slate-500 text-sm select-none">📍</span>
-                      <span className="truncate">{job.location}</span>
-                    </div>
-
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-slate-500 text-sm select-none">📅</span>
-                      <span>{job.postedAt}</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Footer Badges & Call to Action */}
-                <div className="flex items-center justify-between gap-3 pt-3 mt-auto">
-                  <span className={`px-2.5 py-1 text-xs font-semibold rounded-lg truncate max-w-[150px] ${getPublisherStyles(job.publisher)}`}>
-                    via {job.publisher}
-                  </span>
-
-                  <a
-                    href={job.applyLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 bg-slate-900 border border-slate-800 text-xs font-bold text-slate-300 group-hover:bg-gradient-to-r group-hover:from-violet-600 group-hover:to-indigo-600 group-hover:border-violet-500 group-hover:text-white px-4 py-2.5 rounded-xl transition-all duration-300 shadow-md"
-                  >
-                    Apply Now <span className="inline-block transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5">↗</span>
-                  </a>
-                </div>
-              </article>
+          {/* Job Type Filter */}
+          <div style={s.sideSection}>
+            <div style={s.sideLabel}>Employment Type</div>
+            {[
+              { key: 'fulltime', label: 'Full-time' },
+              { key: 'parttime', label: 'Part-time' },
+              { key: 'internship', label: 'Internship' },
+            ].map(t => (
+              <div key={t.key} style={s.checkbox(jobTypes[t.key])}
+                onClick={() => toggleJobType(t.key)}>
+                <span style={{
+                  width: 16, height: 16, borderRadius: 4, display: 'flex',
+                  alignItems: 'center', justifyContent: 'center', fontSize: 11,
+                  border: jobTypes[t.key] ? '1px solid #6366F1' : '1px solid #26354A',
+                  background: jobTypes[t.key] ? '#6366F1' : 'transparent',
+                  color: '#fff', fontWeight: 700
+                }}>
+                  {jobTypes[t.key] ? '✓' : ''}
+                </span>
+                {t.label}
+              </div>
             ))}
           </div>
-        )}
+
+          {/* Stats */}
+          <div style={s.sideSection}>
+            <div style={s.sideLabel}>Results</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color: '#E2E8F0', lineHeight: 1 }}>
+              {loading ? '—' : visibleJobs.length}
+            </div>
+            <div style={{ fontSize: 12, color: '#5A6F8F' }}>
+              {showBookmarksOnly ? 'Bookmarked positions' : 'positions found'}
+            </div>
+          </div>
+
+          {/* Reset */}
+          <button style={s.resetBtn} onClick={resetFilters}
+            onMouseEnter={e => { e.target.style.borderColor = '#374B6A'; e.target.style.color = '#8B9DC3'; }}
+            onMouseLeave={e => { e.target.style.borderColor = '#26354A'; e.target.style.color = '#5A6F8F'; }}>
+            Reset all filters
+          </button>
+        </aside>
+
+        {/* ─── Main Content ─── */}
+        <main style={s.main}>
+          {/* Status Bar */}
+          <div style={s.statusBar}>
+            <span>
+              {loading && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <span className="spinner" /> Searching…
+              </span>}
+              {!loading && !error && `${visibleJobs.length} openings`}
+              {!loading && error && ''}
+            </span>
+            <span style={{ fontSize: 11 }}>
+              {DOMAINS.find(d => d.id === domain)?.label}
+              {locationQuery ? ` · ${locationQuery}` : ''}
+            </span>
+          </div>
+
+          {/* Loading Skeleton */}
+          {loading && (
+            <div style={s.grid}>
+              {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
+            </div>
+          )}
+
+          {/* Error */}
+          {!loading && error && (
+            <div style={s.errorBox}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: '#EF4444', marginBottom: 8 }}>
+                Failed to load jobs
+              </div>
+              <div style={{ fontSize: 13, color: '#8B9DC3', marginBottom: 16 }}>{error}</div>
+              <button style={{ ...s.applyBtn, borderColor: '#EF4444', color: '#EF4444' }}
+                onClick={() => setDomain(domain)}>
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* Empty Bookmark State */}
+          {!loading && !error && visibleJobs.length === 0 && showBookmarksOnly && (
+            <div style={s.emptyState}>
+              <span style={{ fontSize: 32 }}>☆</span>
+              <div style={{ fontSize: 15, fontWeight: 600, color: '#8B9DC3' }}>No saved jobs</div>
+              <div style={{ fontSize: 13 }}>Click the star icon on any job card to bookmark it.</div>
+              <button style={{ ...s.resetBtn, marginTop: 12 }}
+                onClick={() => setShowBookmarksOnly(false)}>View all jobs</button>
+            </div>
+          )}
+
+          {/* Empty Results State */}
+          {!loading && !error && visibleJobs.length === 0 && !showBookmarksOnly && (
+            <div style={s.emptyState}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: '#8B9DC3' }}>No results found</div>
+              <div style={{ fontSize: 13 }}>Try adjusting your filters or selecting a different domain.</div>
+            </div>
+          )}
+
+          {/* Job Cards */}
+          {!loading && !error && visibleJobs.length > 0 && (
+            <div style={s.grid}>
+              {visibleJobs.map(job => (
+                <JobCard key={job.id} job={job} s={s}
+                  isBookmarked={bookmarkedIds.includes(job.id)}
+                  onToggleBookmark={() => toggleBookmark(job.id)} />
+              ))}
+            </div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Job Card Component ─── */
+function JobCard({ job, s, isBookmarked, onToggleBookmark }) {
+  const [hovered, setHovered] = useState(false);
+  const xp = getExperienceBadge(job.title, job.descriptionSnippet);
+
+  return (
+    <article
+      style={{ ...s.card, ...(hovered ? s.cardHover : {}) }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {/* Row 1: Logo + Company + Bookmark */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          {job.logo ? (
+            <img src={job.logo} alt="" style={{
+              width: 36, height: 36, borderRadius: 8, objectFit: 'contain',
+              background: '#fff', padding: 2, flexShrink: 0, border: '1px solid #26354A'
+            }}
+            onError={e => { e.target.style.display = 'none'; }} />
+          ) : (
+            <div style={{
+              width: 36, height: 36, borderRadius: 8, background: '#151D2A',
+              border: '1px solid #26354A', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', fontSize: 14, color: '#5A6F8F', fontWeight: 700, flexShrink: 0
+            }}>
+              {(job.company || 'C')[0]}
+            </div>
+          )}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, color: '#5A6F8F', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {job.company}
+            </div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#E2E8F0', lineHeight: 1.35, marginTop: 2 }}>
+              {job.title}
+            </div>
+          </div>
+        </div>
+        <button style={s.starBtn(isBookmarked)} onClick={onToggleBookmark}
+          title={isBookmarked ? 'Remove bookmark' : 'Bookmark this job'}>
+          {isBookmarked ? '★' : '☆'}
+        </button>
       </div>
 
-      {/* Footer Branding */}
-      <footer className="border-t border-slate-900 mt-20 pt-8 pb-4 text-center text-xs text-slate-600">
-        <div className="max-w-7xl mx-auto px-4">
-          <p>© {new Date().getFullYear()} Domain Job Hub. Sourced dynamically.</p>
-          <p className="mt-1 text-slate-700 font-mono">Clean data validation layers active.</p>
+      {/* Description snippet */}
+      {job.descriptionSnippet && (
+        <div style={{ fontSize: 12, color: '#5A6F8F', lineHeight: 1.5, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+          {job.descriptionSnippet}
         </div>
-      </footer>
-    </div>
+      )}
+
+      {/* Metadata row */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', fontSize: 12 }}>
+        <span style={{ color: '#8B9DC3', display: 'flex', alignItems: 'center', gap: 4 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          {job.location}
+        </span>
+        <span style={{ color: '#26354A' }}>·</span>
+        <span style={{ color: '#5A6F8F' }}>{timeAgo(job.postedAt)}</span>
+      </div>
+
+      {/* Badges + Apply */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={s.badge(xp.color, xp.bg)}>{xp.label}</span>
+          {job.employmentType && (
+            <span style={s.badge('#8B9DC3', 'rgba(139,157,195,0.08)')}>{job.employmentType}</span>
+          )}
+          <span style={s.pubBadge}>via {job.publisher}</span>
+        </div>
+        <a href={job.applyLink} target="_blank" rel="noopener noreferrer"
+          style={s.applyBtn}
+          onMouseEnter={e => { e.target.style.background = '#1C2536'; e.target.style.borderColor = '#374B6A'; }}
+          onMouseLeave={e => { e.target.style.background = '#151D2A'; e.target.style.borderColor = '#26354A'; }}>
+          Apply <span style={{ fontSize: 11 }}>↗</span>
+        </a>
+      </div>
+    </article>
   );
 }

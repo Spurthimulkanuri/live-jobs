@@ -5,134 +5,147 @@ import axios from 'axios';
 const app = express();
 const PORT = 5000;
 
-// Enable CORS for frontend
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  methods: ['GET'],
+  allowedHeaders: ['Content-Type']
+}));
 app.use(express.json());
 
 const RAPIDAPI_KEY = "ddd865a343msh4696cc148fb5a7cp146827jsnff03d4aa96d8";
 
-// Simplified query strings for JSearch to maximize high-quality result retrieval
 const domainKeywords = {
-  ai_ml: "Machine Learning Engineer India",
-  fullstack: "Full Stack Developer India",
-  datascience: "Data Scientist India",
-  cloudcomputing: "Cloud Engineer India",
-  cybersecurity: "Cyber Security Analyst India"
+  ai_ml: "Machine Learning Engineer",
+  fullstack: "Full Stack Developer",
+  datascience: "Data Scientist",
+  cloudcomputing: "Cloud Engineer",
+  cybersecurity: "Cyber Security Analyst"
 };
 
-// GET /api/jobs endpoint
+const trustedPublishers = [
+  'linkedin', 'naukri', 'indeed', 'glassdoor',
+  'foundit', 'shine', 'upwork', 'ziprecruiter', 'weworkremotely'
+];
+
+// GET /api/jobs?domain=ai_ml&location=Remote&job_type=fulltime
 app.get('/api/jobs', async (req, res) => {
-  const { domain } = req.query;
+  const { domain, location, job_type } = req.query;
 
   if (!domain || !domainKeywords[domain]) {
-    return res.status(400).json({ error: "Invalid domain category selected." });
+    return res.status(400).json({ error: 'Invalid domain. Use: ' + Object.keys(domainKeywords).join(', ') });
   }
 
-  console.log(`[Testing API Call] Requesting live openings for: ${domainKeywords[domain]}`);
+  // Build dynamic query string
+  let query = domainKeywords[domain];
+  if (location && location.trim().length > 0) {
+    query += ` ${location.trim()}`;
+  }
 
-  const options = {
-    method: 'GET',
-    url: 'https://jsearch.p.rapidapi.com/search',
-    params: {
-      query: domainKeywords[domain],
-      page: '1',
-      num_pages: '1',
-      date_posted: 'all' // Gives a wider pool of active listings
-    },
-    headers: {
-      'X-RapidAPI-Key': RAPIDAPI_KEY,
-      'X-RapidAPI-Host': 'jsearch.p.rapidapi.com'
-    }
+  console.log(`[API] domain=${domain} location=${location || 'any'} job_type=${job_type || 'any'} → query="${query}"`);
+
+  const params = {
+    query,
+    page: '1',
+    num_pages: '1',
+    date_posted: 'all'
   };
 
+  // Map job_type to JSearch employment_types param
+  if (job_type) {
+    const typeMap = {
+      fulltime: 'FULLTIME',
+      parttime: 'PARTTIME',
+      internship: 'INTERN',
+      contractor: 'CONTRACTOR'
+    };
+    if (typeMap[job_type]) {
+      params.employment_types = typeMap[job_type];
+    }
+  }
+
   try {
-    const response = await axios.request(options);
-    
+    const response = await axios.get('https://jsearch.p.rapidapi.com/search', {
+      params,
+      headers: {
+        'X-RapidAPI-Key': RAPIDAPI_KEY,
+        'X-RapidAPI-Host': 'jsearch.p.rapidapi.com'
+      }
+    });
+
     if (!response.data || !response.data.data) {
       return res.json([]);
     }
 
     const rawJobs = response.data.data;
-    const trustedKeywords = ['linkedin', 'naukri', 'indeed', 'glassdoor', 'foundit', 'shine', 'upwork', 'ziprecruiter'];
 
-    // Filter the jobs dynamically using flexible rules
-    const filteredJobs = rawJobs.filter(job => {
-      const publisherLower = (job.job_publisher || '').toLowerCase();
-      const employerLower = (job.employer_name || '').toLowerCase();
+    // Filter with flexible publisher matching
+    const filtered = rawJobs.filter(job => {
+      const pub = (job.job_publisher || '').toLowerCase();
+      const emp = (job.employer_name || '').toLowerCase();
 
-      // Check if publisher or employer contains any trusted job boards
-      const isTrustedPublisher = trustedKeywords.some(keyword => 
-        publisherLower.includes(keyword) || employerLower.includes(keyword)
-      );
-      
-      // Allow direct company career sites (where publisher name doesn't contain 'job' or 'board')
-      const isDirectCompanySite = !publisherLower.includes('job') && !publisherLower.includes('board') && publisherLower.length > 2;
+      const isTrusted = trustedPublishers.some(k => pub.includes(k));
+      const isDirect = pub.length > 2 && !pub.includes('job') && !pub.includes('board');
+      const isAnon = emp.includes('confidential') || emp.includes('anonymous');
 
-      // Exclude completely anonymous listings (where employer name contains 'confidential' or 'anonymous')
-      const isAnonymous = employerLower.includes('confidential') || employerLower.includes('anonymous');
-
-      // Keep job if it's from a trusted board OR direct company site, and NOT anonymous
-      return (isTrustedPublisher || isDirectCompanySite) && !isAnonymous;
+      return (isTrusted || isDirect) && !isAnon;
     });
 
-    // Helper function to map JSearch fields into clean frontend objects
     const mapJob = (job) => {
-      let location = 'Remote';
-      const locationParts = [];
-      if (job.job_city) locationParts.push(job.job_city);
-      if (job.job_country) locationParts.push(job.job_country);
-      if (locationParts.length > 0) {
-        location = locationParts.join(', ');
-      } else if (job.job_is_remote) {
-        location = 'Remote';
+      const parts = [];
+      if (job.job_city) parts.push(job.job_city);
+      if (job.job_state) parts.push(job.job_state);
+      if (job.job_country) parts.push(job.job_country);
+      const loc = parts.length > 0 ? parts.join(', ') : (job.job_is_remote ? 'Remote' : 'Not specified');
+
+      let postedAt = 'Recent';
+      if (job.job_posted_at_datetime_utc) {
+        postedAt = new Date(job.job_posted_at_datetime_utc).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric'
+        });
+      }
+
+      const desc = job.job_description || '';
+      const snippet = desc.length > 150 ? desc.substring(0, 150) + '…' : desc;
+
+      let employmentType = 'Full-time';
+      if (job.job_employment_type) {
+        const t = job.job_employment_type.toUpperCase();
+        if (t === 'INTERN') employmentType = 'Internship';
+        else if (t === 'PARTTIME') employmentType = 'Part-time';
+        else if (t === 'CONTRACTOR') employmentType = 'Contract';
+        else employmentType = 'Full-time';
       }
 
       return {
         id: job.job_id,
         title: job.job_title || 'Software Engineer',
-        company: job.employer_name || 'Verified Employer',
-        logo: job.employer_logo || 'https://cdn-icons-png.flaticon.com/512/2930/2930225.png',
-        location: location,
-        publisher: job.job_publisher || 'Verified Source', 
+        company: job.employer_name || 'Company',
+        logo: job.employer_logo || null,
+        location: loc,
+        publisher: job.job_publisher || 'Direct',
         applyLink: job.job_apply_link || '#',
-        postedAt: job.job_posted_at_datetime_utc ? new Date(job.job_posted_at_datetime_utc).toLocaleDateString() : 'Recent'
+        postedAt,
+        descriptionSnippet: snippet,
+        employmentType
       };
     };
 
-    let cleanJobs = filteredJobs.map(mapJob);
+    let results = filtered.map(mapJob);
 
-    // Safety Fallback Loop: If strict filtering leaves 0 results, bypass filter for top 10 raw results
-    if (cleanJobs.length === 0) {
-      console.log(`[Aggregator] Filters were too strict for ${domain}. Activating safety fallback.`);
-      cleanJobs = rawJobs.slice(0, 10).map(job => {
-        let location = 'Remote';
-        const locationParts = [];
-        if (job.job_city) locationParts.push(job.job_city);
-        if (job.job_country) locationParts.push(job.job_country);
-        if (locationParts.length > 0) {
-          location = locationParts.join(', ');
-        }
-        return {
-          id: job.job_id,
-          title: job.job_title || 'Software Engineer',
-          company: job.employer_name || 'Employer',
-          logo: job.employer_logo || 'https://cdn-icons-png.flaticon.com/512/2930/2930225.png',
-          location: location,
-          publisher: job.job_publisher || 'External Link',
-          applyLink: job.job_apply_link || '#',
-          postedAt: 'Recent'
-        };
-      });
+    // Safety fallback: if filters leave 0, return top 12 raw
+    if (results.length === 0) {
+      console.log(`[API] Filters too strict for "${domain}". Returning raw top 12.`);
+      results = rawJobs.slice(0, 12).map(mapJob);
     }
 
-    return res.json(cleanJobs);
+    return res.json(results);
 
-  } catch (error) {
-    console.error("API Error Details:", error.response?.data || error.message);
-    return res.status(500).json({ error: "Failed to grab live data stream." });
+  } catch (err) {
+    console.error('[API] Error:', err.response?.data || err.message);
+    return res.status(500).json({ error: 'Failed to fetch jobs from upstream API.' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Backend server is running on http://localhost:${PORT}`);
+  console.log(`Backend running → http://localhost:${PORT}/api/jobs`);
 });
