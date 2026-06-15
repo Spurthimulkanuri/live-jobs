@@ -1,43 +1,100 @@
 @import "tailwindcss";
 
-/* ─── Enterprise Dark Theme Foundation ─── */
+/* ═══════════════════════════════════════════
+   LIVEJOBS PRO — NEO-BRUTALIST THEME ENGINE
+   ═══════════════════════════════════════════ */
+
+/* ── Light Mode (Default) ── */
 :root {
-  --bg-base: #0B0F17;
-  --bg-surface: #111827;
-  --bg-elevated: #151D2A;
-  --bg-hover: #1C2536;
-  --border: #26354A;
-  --border-hover: #374B6A;
-  --text-primary: #E2E8F0;
-  --text-secondary: #8B9DC3;
-  --text-muted: #5A6F8F;
-  --accent: #6366F1;
-  --accent-hover: #818CF8;
-  --accent-muted: rgba(99, 102, 241, 0.12);
+  --bg-page: #F5F3EE;
+  --bg-card: #FFFFFF;
+  --bg-sidebar: #FAFAF7;
+  --bg-input: #FFFFFF;
+  --bg-pill-active: #1A1A1A;
+  --bg-pill-idle: #FFFFFF;
+  --bg-kpi: #FFFFFF;
+  --bg-badge: #F0EDFA;
+  --bg-hover: #F0F0EC;
+  --bg-skeleton-base: #EDEAE4;
+  --bg-skeleton-shine: #F5F3EE;
+
+  --border-main: #1A1A1A;
+  --border-soft: #D4D0C8;
+  --border-card: #1A1A1A;
+
+  --text-primary: #1A1A1A;
+  --text-secondary: #5C5C5C;
+  --text-muted: #8A8A8A;
+  --text-inverse: #FFFFFF;
+  --text-pill-active: #FFFFFF;
+  --text-pill-idle: #1A1A1A;
+
+  --accent: #5B5CF0;
+  --accent-text: #4338CA;
+  --accent-bg: #EDEDFF;
+  --green: #16A34A;
+  --green-bg: #DCFCE7;
+  --amber: #D97706;
+  --amber-bg: #FEF3C7;
+  --red: #DC2626;
+  --red-bg: #FEE2E2;
+
+  --shadow-brutal: 4px 4px 0px #1A1A1A;
+  --shadow-brutal-hover: 6px 6px 0px #1A1A1A;
+  --shadow-brutal-sm: 2px 2px 0px #1A1A1A;
+  --radius: 12px;
+}
+
+/* ── Dark Mode ── */
+[data-theme="dark"] {
+  --bg-page: #0E1117;
+  --bg-card: #161B26;
+  --bg-sidebar: #12161F;
+  --bg-input: #1A1F2C;
+  --bg-pill-active: #FFFFFF;
+  --bg-pill-idle: #1A1F2C;
+  --bg-kpi: #161B26;
+  --bg-badge: #1E2436;
+  --bg-hover: #1E2436;
+  --bg-skeleton-base: #161B26;
+  --bg-skeleton-shine: #1E2436;
+
+  --border-main: #3A4253;
+  --border-soft: #2A3040;
+  --border-card: #3A4253;
+
+  --text-primary: #F1F5F9;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+  --text-inverse: #0E1117;
+  --text-pill-active: #0E1117;
+  --text-pill-idle: #CBD5E1;
+
+  --accent: #818CF8;
+  --accent-text: #A5B4FC;
+  --accent-bg: rgba(129, 140, 248, 0.12);
+  --green: #4ADE80;
+  --green-bg: rgba(74, 222, 128, 0.1);
+  --amber: #FBBF24;
+  --amber-bg: rgba(251, 191, 36, 0.1);
+  --red: #F87171;
+  --red-bg: rgba(248, 113, 113, 0.1);
+
+  --shadow-brutal: 4px 4px 0px #2A3040;
+  --shadow-brutal-hover: 6px 6px 0px #3A4253;
+  --shadow-brutal-sm: 2px 2px 0px #2A3040;
 }
 
 @layer base {
   body {
-    background-color: var(--bg-base);
+    background: var(--bg-page);
     color: var(--text-primary);
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
-  h1, h2, h3, h4, h5, h6 {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-weight: 600;
+    transition: background 0.2s, color 0.2s;
   }
 }
 
-/* ─── Scrollbar ─── */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: var(--bg-base); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
-
-/* ─── Root Reset ─── */
 #root {
   width: 100% !important;
   max-width: 100% !important;
@@ -50,28 +107,19 @@
   flex-direction: column;
 }
 
-/* ─── Skeleton Pulse Animation ─── */
+/* ── Skeleton Shimmer ── */
 @keyframes shimmer {
   0% { background-position: -400px 0; }
   100% { background-position: 400px 0; }
 }
-
 .skeleton {
-  background: linear-gradient(90deg, #151D2A 25%, #1C2536 50%, #151D2A 75%);
+  background: linear-gradient(90deg, var(--bg-skeleton-base) 25%, var(--bg-skeleton-shine) 50%, var(--bg-skeleton-base) 75%);
   background-size: 800px 100%;
-  animation: shimmer 1.5s ease-in-out infinite;
-  border-radius: 6px;
+  animation: shimmer 1.6s ease-in-out infinite;
 }
 
-/* ─── Spinner ─── */
-@keyframes spin-smooth {
-  to { transform: rotate(360deg); }
-}
-.spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin-smooth 0.6s linear infinite;
-}
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-page); }
+::-webkit-scrollbar-thumb { background: var(--border-soft); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-main); }
