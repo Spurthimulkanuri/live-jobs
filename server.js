@@ -3,46 +3,30 @@ import cors from 'cors';
 import axios from 'axios';
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = 5000;
 
-// Enable CORS for the React frontend
-app.use(cors());
+// Enable CORS for Vite frontend (typically http://localhost:5173)
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
-// Hardcoded RapidAPI Key exactly as requested
 const RAPIDAPI_KEY = "ddd865a343msh4696cc148fb5a7cp146827jsnff03d4aa96d8";
+const RAPIDAPI_HOST = "jsearch.p.rapidapi.com";
 
-// Map domains to search query strings exactly as specified in the updated requirements
+// Dictionary mapping for domains to JSearch query strings
 const DOMAIN_QUERIES = {
-  ai_ml: "Machine Learning Engineer hiring or AI Developer hiring",
-  fullstack: "Full Stack MERN Developer hiring or Web Developer hiring",
-  datascience: "Data Scientist hiring or Data Analyst hiring",
-  cloudcomputing: "Cloud Engineer AWS Azure hiring",
-  cybersecurity: "Cyber Security Analyst hiring or Penetration Tester hiring"
+  ai_ml: "Machine Learning Engineer hiring on LinkedIn or Naukri or Indeed",
+  fullstack: "Full Stack Developer MERN hiring on LinkedIn or Naukri or Indeed",
+  datascience: "Data Scientist hiring on LinkedIn or Naukri or Indeed",
+  cloudcomputing: "Cloud Engineer hiring on LinkedIn or Naukri or Indeed",
+  cybersecurity: "Cyber Security Analyst hiring on LinkedIn or Naukri or Indeed"
 };
 
-// Trusted premium publishers whitelist
-const TRUSTED_PUBLISHERS = ['LinkedIn', 'Naukri', 'Indeed', 'Naukri.com', 'Glassdoor', 'Upwork'];
-
-// Generic recruiter or placeholder company names to discard
-const GENERIC_COMPANIES = [
-  'confidential', 
-  'anonymous', 
-  'recruitment agency', 
-  'recruiter', 
-  'recruitment', 
-  'agency', 
-  'hiring agency', 
-  'temp agency', 
-  'placeholder', 
-  'company name', 
-  'unknown'
-];
-
-// Fallback logo URL in case the company has no logo
-const FALLBACK_LOGO = "https://cdn-icons-png.flaticon.com/512/2930/2930225.png";
-
-// GET http://localhost:5000/api/jobs?domain=<domain_id>
+// GET /api/jobs endpoint
 app.get('/api/jobs', async (req, res) => {
   const { domain } = req.query;
 
@@ -53,147 +37,128 @@ app.get('/api/jobs', async (req, res) => {
     });
   }
 
-  const queryStr = DOMAIN_QUERIES[domain];
-
-  // Optimize JSearch query string for optimal results matching the direct-hire intent
-  let apiQuery = queryStr;
-  if (domain === 'ai_ml') {
-    apiQuery = "Machine Learning Engineer hiring";
-  } else if (domain === 'fullstack') {
-    apiQuery = "Full Stack Developer hiring";
-  } else if (domain === 'datascience') {
-    apiQuery = "Data Scientist hiring";
-  } else if (domain === 'cloudcomputing') {
-    apiQuery = "Cloud Engineer hiring";
-  } else if (domain === 'cybersecurity') {
-    apiQuery = "Cyber Security Analyst hiring";
-  }
+  const query = DOMAIN_QUERIES[domain];
 
   try {
-    console.log(`[Aggregator] Domain: ${domain}`);
-    console.log(`  - Target Query: "${queryStr}"`);
-    console.log(`  - Clean API Search Query: "${apiQuery}"`);
-
-    // Fetch up to 3 pages (30 jobs) to ensure we have enough genuine jobs after filtering
     const response = await axios.get('https://jsearch.p.rapidapi.com/search', {
       params: {
-        query: apiQuery,
+        query: query,
         page: '1',
-        num_pages: '3',       // Retrieve more listings for richer filtering
-        date_posted: 'week'   // FILTER 1: FRESHNESS FILTER (strictly past week)
+        num_pages: '1',
+        date_posted: 'week'
       },
       headers: {
         'X-RapidAPI-Key': RAPIDAPI_KEY,
-        'X-RapidAPI-Host': 'jsearch.p.rapidapi.com'
+        'X-RapidAPI-Host': RAPIDAPI_HOST
       }
     });
 
     const rawJobs = response.data.data || [];
-    console.log(`[Aggregator] Received ${rawJobs.length} raw listings from JSearch.`);
 
-    // Apply strict filtering criteria
+    // Filter jobs based on verification rules
     const filteredJobs = rawJobs.filter((job) => {
-      // 1. Publisher Whitelist Check (case-insensitive mapping)
-      if (!job.job_publisher) return false;
-      const isTrustedPublisher = TRUSTED_PUBLISHERS.some(pub => 
-        pub.trim().toLowerCase() === job.job_publisher.trim().toLowerCase()
-      );
-      if (!isTrustedPublisher) return false;
+      // 1. Check verified job publisher (LinkedIn, Naukri, Indeed, Glassdoor, or corporate/company career pages)
+      const publisher = job.job_publisher ? job.job_publisher.toLowerCase().trim() : '';
+      const company = job.employer_name ? job.employer_name.toLowerCase().trim() : '';
 
-      // 2. Company Name Validation
-      if (!job.employer_name) return false;
-      const companyLower = job.employer_name.trim().toLowerCase();
-      const isGenericCompany = GENERIC_COMPANIES.some(generic => 
-        companyLower === generic ||
-        companyLower.includes('confidential') ||
-        companyLower.includes('anonymous') ||
-        companyLower.includes('recruitment agency') ||
-        companyLower.includes('recruiting agency')
-      );
-      if (isGenericCompany || companyLower.length < 2) return false;
+      const isVerifiedPublisher =
+        publisher.includes('linkedin') ||
+        publisher.includes('naukri') ||
+        publisher.includes('indeed') ||
+        publisher.includes('glassdoor') ||
+        // Check if publisher contains company name (meaning it's their own corporate/career page)
+        (company && publisher.includes(company)) ||
+        // Check standard corporate page keywords / ATS portals
+        publisher.includes('careers') ||
+        publisher.includes('workday') ||
+        publisher.includes('greenhouse') ||
+        publisher.includes('lever') ||
+        publisher.includes('recruitee') ||
+        publisher.includes('jobvite') ||
+        publisher.includes('bamboohr') ||
+        publisher.includes('applytojob');
 
-      // 3. Description Integrity Check (must be at least 150 characters)
-      if (!job.job_description || job.job_description.trim().length < 150) return false;
+      if (!isVerifiedPublisher) {
+        return false;
+      }
+
+      // 2. Check employer name is generic or missing (e.g. "Confidential" or "Anonymous")
+      if (!job.employer_name) {
+        return false;
+      }
+      
+      const employerNameLower = job.employer_name.toLowerCase().trim();
+      if (
+        employerNameLower === '' ||
+        employerNameLower === 'confidential' ||
+        employerNameLower === 'anonymous' ||
+        employerNameLower.includes('confidential') ||
+        employerNameLower.includes('anonymous')
+      ) {
+        return false;
+      }
 
       return true;
     });
 
-    console.log(`[Aggregator] Retained ${filteredJobs.length} genuine job listings after strict filtering.`);
-
-    // Parse the filtered jobs array into a clean structure for the frontend
+    // Map the filtered jobs array into a clean structure for the frontend
     const cleanJobs = filteredJobs.map((job) => {
-      // Formulate a location string
-      let locationParts = [];
+      // Parse locations
+      let location = 'Remote';
+      const locationParts = [];
       if (job.job_city) locationParts.push(job.job_city);
       if (job.job_state) locationParts.push(job.job_state);
       if (job.job_country) locationParts.push(job.job_country);
-      const location = locationParts.length > 0 ? locationParts.join(', ') : (job.job_is_remote ? 'Remote' : 'Location details not specified');
 
-      // Formulate human-readable posted time
-      let postedDate = 'Recently';
-      if (job.job_posted_at_datetime_utc) {
-        try {
-          const date = new Date(job.job_posted_at_datetime_utc);
-          postedDate = date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-          });
-        } catch (e) {}
-      } else if (job.job_posted_at_timestamp) {
-        try {
-          const date = new Date(job.job_posted_at_timestamp * 1000);
-          postedDate = date.toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric'
-          });
-        } catch (e) {}
+      if (locationParts.length > 0) {
+        location = locationParts.join(', ');
+      } else if (job.job_is_remote) {
+        location = 'Remote';
+      } else {
+        location = 'N/A';
       }
+
+      // Parse date posted
+      let postedAt = 'Recently';
+      if (job.job_posted_at_datetime_utc) {
+        postedAt = new Date(job.job_posted_at_datetime_utc).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        });
+      } else if (job.job_posted_at_timestamp) {
+        postedAt = new Date(job.job_posted_at_timestamp * 1000).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric'
+        });
+      }
+
+      const defaultLogo = "https://cdn-icons-png.flaticon.com/512/2930/2930225.png";
 
       return {
         id: job.job_id,
         title: job.job_title || 'Software Engineer',
-        company: job.employer_name || 'Confidential Company',
-        logo: job.employer_logo || FALLBACK_LOGO,
+        company: job.employer_name,
+        logo: job.employer_logo || defaultLogo,
         location: location,
-        publisher: job.job_publisher || 'Job Board',
+        publisher: job.job_publisher || 'Corporate Page',
         applyLink: job.job_apply_link || '#',
-        postedAt: postedDate,
-        // Optional snippet of description to pass for UI display (first 200 chars)
-        description: job.job_description ? job.job_description.substring(0, 200) + '...' : ''
+        postedAt: postedAt
       };
     });
 
-    res.json({
-      success: true,
-      domain: domain,
-      query: queryStr,
-      apiQuery: apiQuery,
-      resultsCount: cleanJobs.length,
-      jobs: cleanJobs
-    });
+    res.json(cleanJobs);
 
   } catch (error) {
-    console.error('Error in job aggregator API:', error.message);
-    
+    console.error('Error fetching jobs from JSearch API:', error.message);
     res.status(500).json({
-      success: false,
-      error: 'Failed to fetch jobs from backend aggregator.',
-      message: error.response?.data?.message || error.message
+      error: 'Failed to fetch jobs',
+      message: error.message
     });
   }
 });
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'healthy', timestamp: new Date() });
-});
-
 app.listen(PORT, () => {
-  console.log(`========================================`);
-  console.log(` Domain Job Hub Backend is running!`);
-  console.log(` Endpoint: http://localhost:${PORT}/api/jobs`);
-  console.log(` Health: http://localhost:${PORT}/api/health`);
-  console.log(`========================================`);
+  console.log(`Backend server is running on http://localhost:${PORT}`);
 });
