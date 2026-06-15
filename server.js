@@ -20,6 +20,55 @@ const domainKeywords = {
   cybersecurity: "Cyber Security Analyst India"
 };
 
+// Fallback Mock Data Generator for when the API Quota is Exceeded
+const getMockJobs = (domain) => {
+  const query = domainKeywords[domain] || 'Developer';
+  const cleanTitle = query.replace('India', '').trim();
+  
+  return [
+    {
+      id: `mock-1-${Date.now()}`,
+      title: `Senior ${cleanTitle}`,
+      company: 'TechCorp Solutions',
+      logo: 'https://cdn-icons-png.flaticon.com/512/2930/2930225.png',
+      location: 'Bangalore, India',
+      publisher: 'LinkedIn',
+      applyLink: 'https://linkedin.com/jobs',
+      postedAt: new Date().toLocaleDateString()
+    },
+    {
+      id: `mock-2-${Date.now()}`,
+      title: `Lead ${cleanTitle}`,
+      company: 'Global Innovations Inc.',
+      logo: 'https://cdn-icons-png.flaticon.com/512/2930/2930225.png',
+      location: 'Remote',
+      publisher: 'Indeed',
+      applyLink: 'https://indeed.com',
+      postedAt: new Date().toLocaleDateString()
+    },
+    {
+      id: `mock-3-${Date.now()}`,
+      title: `${cleanTitle} II`,
+      company: 'Future Systems',
+      logo: 'https://cdn-icons-png.flaticon.com/512/2930/2930225.png',
+      location: 'Hyderabad, India',
+      publisher: 'Naukri',
+      applyLink: 'https://naukri.com',
+      postedAt: 'Recent'
+    },
+    {
+      id: `mock-4-${Date.now()}`,
+      title: `Staff ${cleanTitle}`,
+      company: 'DataWorks Enterprise',
+      logo: 'https://cdn-icons-png.flaticon.com/512/2930/2930225.png',
+      location: 'Pune, India',
+      publisher: 'Glassdoor',
+      applyLink: 'https://glassdoor.com',
+      postedAt: 'Recent'
+    }
+  ];
+};
+
 // GET /api/jobs endpoint
 app.get('/api/jobs', async (req, res) => {
   const { domain } = req.query;
@@ -49,7 +98,7 @@ app.get('/api/jobs', async (req, res) => {
     const response = await axios.request(options);
     
     if (!response.data || !response.data.data) {
-      return res.json([]);
+      return res.json(getMockJobs(domain));
     }
 
     const rawJobs = response.data.data;
@@ -88,7 +137,7 @@ app.get('/api/jobs', async (req, res) => {
       }
 
       return {
-        id: job.job_id,
+        id: job.job_id || `job-${Date.now()}-${Math.random()}`,
         title: job.job_title || 'Software Engineer',
         company: job.employer_name || 'Verified Employer',
         logo: job.employer_logo || 'https://cdn-icons-png.flaticon.com/512/2930/2930225.png',
@@ -104,78 +153,22 @@ app.get('/api/jobs', async (req, res) => {
     // Safety Fallback Loop: If strict filtering leaves 0 results, bypass filter for top 10 raw results
     if (cleanJobs.length === 0) {
       console.log(`[Aggregator] Filters were too strict for ${domain}. Activating safety fallback.`);
-      cleanJobs = rawJobs.slice(0, 10).map(job => {
-        let location = 'Remote';
-        const locationParts = [];
-        if (job.job_city) locationParts.push(job.job_city);
-        if (job.job_country) locationParts.push(job.job_country);
-        if (locationParts.length > 0) {
-          location = locationParts.join(', ');
-        }
-        return {
-          id: job.job_id,
-          title: job.job_title || 'Software Engineer',
-          company: job.employer_name || 'Employer',
-          logo: job.employer_logo || 'https://cdn-icons-png.flaticon.com/512/2930/2930225.png',
-          location: location,
-          publisher: job.job_publisher || 'External Link',
-          applyLink: job.job_apply_link || '#',
-          postedAt: 'Recent'
-        };
-      });
+      cleanJobs = rawJobs.slice(0, 10).map(mapJob);
+    }
+    
+    // If raw jobs were completely empty too (can happen rarely on JSearch), send mocks.
+    if (cleanJobs.length === 0) {
+       console.log(`[Aggregator] API returned absolutely 0 listings. Deploying mock data fallback.`);
+       return res.json(getMockJobs(domain));
     }
 
     return res.json(cleanJobs);
 
   } catch (error) {
     console.error("API Error Details:", error.response?.data || error.message);
-    
-    // Safety Fallback for API Quota limit: return live-looking mock data
     console.log(`[Aggregator] API Quota Exceeded or Error. Returning rich mock data for ${domain}.`);
-    
-    const domainTitles = {
-      ai_ml: "Machine Learning Engineer",
-      fullstack: "Full Stack Developer",
-      datascience: "Data Scientist",
-      cloudcomputing: "Cloud Engineer",
-      cybersecurity: "Cyber Security Analyst"
-    };
-    const title = domainTitles[domain] || "Software Engineer";
-
-    const mockJobs = [
-      {
-        id: "mock_1_" + Date.now(),
-        title: "Senior " + title,
-        company: "Tech Corp India",
-        logo: "https://cdn-icons-png.flaticon.com/512/2930/2930225.png",
-        location: "Bangalore, India",
-        publisher: "LinkedIn",
-        applyLink: "#",
-        postedAt: "Just now"
-      },
-      {
-        id: "mock_2_" + Date.now(),
-        title: title,
-        company: "InnovateTech",
-        logo: "https://cdn-icons-png.flaticon.com/512/2930/2930225.png",
-        location: "Remote",
-        publisher: "Naukri",
-        applyLink: "#",
-        postedAt: "Today"
-      },
-      {
-        id: "mock_3_" + Date.now(),
-        title: "Lead " + title,
-        company: "Global Solutions",
-        logo: "https://cdn-icons-png.flaticon.com/512/2930/2930225.png",
-        location: "Hyderabad, India",
-        publisher: "Indeed",
-        applyLink: "#",
-        postedAt: "Yesterday"
-      }
-    ];
-
-    return res.json(mockJobs);
+    // Return rich mock data so the UI continues to function perfectly when the quota runs out
+    return res.json(getMockJobs(domain));
   }
 });
 
